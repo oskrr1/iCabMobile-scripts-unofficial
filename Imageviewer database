@@ -1,0 +1,58 @@
+// ==UserScript==
+// @name         Image Grid DB Creator (One-Time + Auto-Clear + Overwrite)
+// @namespace    http://tampermonkey.net/
+// @version      1.2
+// @description  Creates and overwrites DB once per tab and deletes it on tab close/reload
+// @match        imagebrowser:///*
+// @grant        none
+// @run-at       document-end
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    const STORAGE_KEY = "standalone_image_filenames";
+
+    function log(msg) {
+        const panel = document.querySelector('#debug-panel');
+        if (panel) {
+            const line = document.createElement('div');
+            line.textContent = '[Debug] ' + msg;
+            panel.appendChild(line);
+        }
+    }
+
+    // Only create and overwrite DB once per page load
+    if (document.querySelectorAll('a[href*="?file="]').length >= 1 && !sessionStorage.getItem('db_created')) {
+        log("[INFO] Detected Grid Page (Overwrite Mode)");
+
+        const allLinks = document.querySelectorAll('a');
+        const newFilenames = [];
+
+        allLinks.forEach(link => {
+            const href = link.getAttribute('href') || '';
+            const match = href.match(/\?file=([^&]+)/);
+            if (match) {
+                const filename = decodeURIComponent(match[1]);
+                newFilenames.push(filename);
+                log(`[GRID PAGE] Captured: ${filename}`);
+            }
+        });
+
+        const uniqueFilenames = Array.from(new Set(newFilenames));
+
+        // Always overwrite any existing DB on first load
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(uniqueFilenames));
+        sessionStorage.setItem('db_created', 'true'); // block future updates in this session
+
+        log(`[GRID PAGE] DB overwritten with ${uniqueFilenames.length} filenames.`);
+    } else if (sessionStorage.getItem('db_created')) {
+        log("[INFO] DB already created for this tab session, skipping.");
+    }
+
+    // Delete DB on tab close/reload
+    window.addEventListener('beforeunload', () => {
+        localStorage.removeItem(STORAGE_KEY);
+        log(`[INFO] DB cleared on tab close/reload.`);
+    });
+})();
