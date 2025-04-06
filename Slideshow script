@@ -1,0 +1,216 @@
+// ==UserScript==
+// @name         Slideshow with Random Toggle (R) and Debug Panel
+// @namespace    http://tampermonkey.net/
+// @version      5.4
+// @description  Tap to toggle slideshow, S for start/stop, R for random mode toggle, debug logging
+// @match        imagebrowser:///*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const STORAGE_KEY = "standalone_image_filenames";
+    const SLIDESHOW_ACTIVE_KEY = "rs_slideshow_active";
+    const RANDOM_MODE_KEY = "random_mode_enabled";
+
+    const imgElement = document.getElementById("img");
+    const filenames = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    let lastFilename = '';
+    let gifTapAlreadyTriggered = false;
+    let slideshowTimeout = null;
+
+    let isSlideshowActive = localStorage.getItem(SLIDESHOW_ACTIVE_KEY) === "true";
+    let isRandomMode = localStorage.getItem(RANDOM_MODE_KEY) === "true";
+
+    // ----------- Logging -----------
+    function log(msg) {
+        const panel = document.querySelector('#debug-panel');
+        if (panel) {
+            const line = document.createElement('div');
+            line.textContent = msg;
+            panel.appendChild(line);
+        }
+    }
+
+    // ----------- Track current image + GIF detection -----------
+    setInterval(() => {
+        const currentSrc = imgElement?.getAttribute('src') || '';
+        const match = currentSrc.match(/[?&](file|image)=([^&]+)/);
+        const filename = match ? decodeURIComponent(match[2]) : '';
+
+        if (filename && filename !== lastFilename) {
+            lastFilename = filename;
+            log(`[SLIDESHOW] Now displaying: ${filename}`);
+
+            if (filename.toLowerCase().endsWith('.gif')) {
+                if (isSlideshowActive && !gifTapAlreadyTriggered) {
+                    gifTapAlreadyTriggered = true;
+                    stopSlideshow();
+                    log("[SLIDESHOW] GIF detected - stopping slideshow.");
+                }
+            } else {
+                gifTapAlreadyTriggered = false;
+            }
+        }
+    }, 500);
+
+    // ----------- Slideshow Logic -----------
+    function updateSlideshowButtonStyle() {
+        const sToggle = document.getElementById("rs-toggle");
+        sToggle.style.backgroundColor = isSlideshowActive ? "rgba(0, 128, 0, 0.7)" : "rgba(0, 0, 0, 0.5)";
+    }
+
+    function updateRButtonStyle() {
+        const rToggle = document.getElementById("r-toggle");
+        if (rToggle) {
+            rToggle.style.backgroundColor = isRandomMode ? "rgba(0, 128, 0, 0.7)" : "rgba(0, 0, 0, 0.5)";
+        }
+    }
+
+    function startSlideshow() {
+        isSlideshowActive = true;
+        localStorage.setItem(SLIDESHOW_ACTIVE_KEY, "true");
+        updateSlideshowButtonStyle();
+        log("[SLIDESHOW] Started");
+        runNextImage();
+        scheduleNext();
+    }
+
+    function stopSlideshow() {
+        isSlideshowActive = false;
+        localStorage.setItem(SLIDESHOW_ACTIVE_KEY, "false");
+        updateSlideshowButtonStyle();
+        clearTimeout(slideshowTimeout);
+        log("[SLIDESHOW] Stopped");
+    }
+
+    function toggleSlideshow() {
+        isSlideshowActive ? stopSlideshow() : startSlideshow();
+    }
+
+    function scheduleNext() {
+        clearTimeout(slideshowTimeout);
+        if (isSlideshowActive) {
+            slideshowTimeout = setTimeout(() => {
+                runNextImage();
+                scheduleNext();
+            }, 4000);
+        }
+    }
+
+    // ----------- Next Image Logic (Random or Sequential) -----------
+    function runNextImage() {
+        const nextLink = document.querySelector("#next a");
+        const folderHref = nextLink?.href?.match(/^(imagebrowser:\/\/\/.+\/Documents\/)/);
+        if (!folderHref) {
+            log("[ERROR] Could not detect folder path.");
+            stopSlideshow();
+            return;
+        }
+
+        const folderPath = folderHref[1];
+        let nextFile;
+
+        if (isRandomMode) {
+            let attempts = 5;
+            do {
+                nextFile = filenames[Math.floor(Math.random() * filenames.length)];
+            } while (nextFile === lastFilename && --attempts > 0);
+        } else {
+            const sorted = filenames.slice().sort((a, b) => a.localeCompare(b));
+            const currentIndex = sorted.indexOf(lastFilename);
+            const nextIndex = (currentIndex + 1) % sorted.length;
+            nextFile = sorted[nextIndex];
+        }
+
+        const newHref = folderPath + '?file=' + encodeURIComponent(nextFile);
+        nextLink.href = newHref;
+        nextLink.click();
+    }
+
+    // ----------- Inject "S" Button (Slideshow toggle) -----------
+    if (!document.getElementById("rs-toggle")) {
+        const sButton = document.createElement("span");
+        sButton.className = "panel";
+        sButton.innerHTML = `<span id="rs-toggle" style="display: inline-block; padding: 5px 10px;
+            width: 40px; height: 40px; background-color: rgba(0, 0, 0, 0.5); border-radius: 8px;
+            position: relative; text-align: center; line-height: 40px; color: #fff; font-weight: bold;
+            cursor: pointer; top: -22px; opacity: 1;">S</span>`;
+        const panel = document.getElementById("panel");
+        const prevButton = document.getElementById("prev").parentNode;
+        sButton.style.marginRight = "5px";
+        sButton.style.verticalAlign = "middle";
+        panel.insertBefore(sButton, prevButton);
+    }
+
+    // ----------- Inject "R" Button (Random toggle) -----------
+    if (!document.getElementById("r-toggle")) {
+        const rButton = document.createElement("span");
+        rButton.className = "panel";
+        rButton.innerHTML = `<span id="r-toggle" style="display: inline-block; padding: 5px 10px;
+            width: 40px; height: 40px; background-color: rgba(0, 0, 0, 0.5); border-radius: 8px;
+            position: fixed; text-align: center; line-height: 40px; color: #fff; font-weight: bold;
+            cursor: pointer; top: 10px; left: 10px; z-index: 9999;">R</span>`;
+        document.body.appendChild(rButton);
+
+        document.getElementById("r-toggle").addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            isRandomMode = !isRandomMode;
+            localStorage.setItem(RANDOM_MODE_KEY, isRandomMode ? "true" : "false");
+            updateRButtonStyle();
+            log(`[MODE] Random mode ${isRandomMode ? "enabled" : "disabled"}`);
+            runNextImage(); // immediate next image
+        });
+    }
+
+    // ----------- Image Tap to Start/Stop Slideshow -----------
+    imgElement.addEventListener("click", () => {
+        toggleSlideshow();
+    });
+
+    imgElement.addEventListener("error", () => {
+        if (isSlideshowActive) {
+            log("[ERROR] Image failed to load. Trying another...");
+            runNextImage();
+        }
+    });
+
+    document.getElementById("rs-toggle").addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleSlideshow();
+    });
+
+    // ----------- Init -----------
+    updateSlideshowButtonStyle();
+    updateRButtonStyle();
+    if (isSlideshowActive) scheduleNext();
+
+    // ----------- Prevent Panel From Hiding -----------
+    function keepPanelVisible() {
+        const panel = document.getElementById('panel');
+        if (panel) {
+            panel.style.display = 'block';
+            panel.style.opacity = '1';
+            panel.style.visibility = 'visible';
+        }
+    }
+
+    ['touchstart', 'touchend', 'touchmove'].forEach(eventType => {
+        window.addEventListener(eventType, function (e) {
+            e.stopImmediatePropagation();
+        }, true);
+    });
+
+    const interval = setInterval(() => keepPanelVisible(), 200);
+    const moInterval = setInterval(() => {
+        const panel = document.getElementById('panel');
+        if (panel) {
+            clearInterval(moInterval);
+            new MutationObserver(() => {
+                keepPanelVisible();
+            }).observe(panel, { attributes: true, attributeFilter: ['style'] });
+        }
+    }, 200);
+})();
