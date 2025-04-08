@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slideshow with Random Toggle (R) and Debug Panel
 // @namespace    http://tampermonkey.net/
-// @version      5.4
+// @version      5.9
 // @description  Tap to toggle slideshow, S for start/stop, R for random mode toggle, debug logging
 // @match        imagebrowser:///*
 // @grant        none
@@ -161,7 +161,12 @@
             localStorage.setItem(RANDOM_MODE_KEY, isRandomMode ? "true" : "false");
             updateRButtonStyle();
             log(`[MODE] Random mode ${isRandomMode ? "enabled" : "disabled"}`);
-            runNextImage(); // immediate next image
+
+            // Reload current image only; do not advance
+            const currentSrc = imgElement?.getAttribute('src');
+            if (currentSrc) {
+                imgElement.setAttribute('src', currentSrc);
+            }
         });
     }
 
